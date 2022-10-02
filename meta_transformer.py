@@ -8,6 +8,7 @@ class MetaTransformer(torch.nn.Module):
     self._base_model = base_model
     for param in self._base_model.parameters():
       param.requires_grad = False
+    self._base_model.to(input_batch.device)
 
     self._activations = {}
     self._layer_names = layer_names
