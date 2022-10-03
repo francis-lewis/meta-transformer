@@ -9,12 +9,13 @@ import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.optim as optim
 import torchvision
-import torchvision.transforms as transforms
 
-from torch.nn.parallel import DistributedDataParallel as DDP
+#from torch.nn.parallel import DistributedDataParallel as DDP
 from vit_pytorch import SimpleViT
 
 from conv_net import ConvNet
+
+EXPERIMENT_ROOT = os.path.expanduser("~/Developer/experiments")
 
 def proc_setup(rank, num_proc):
   os.environ['MASTER_ADDR'] = 'localhost'
@@ -43,16 +44,14 @@ def define_finetune_model(base_model, num_classes, head_layer_name, finetune_bas
 
   return base_model
 
-def get_data_loaders(dataset, transform, batch_size=64, root='~/Developer/experiments/data', is_distributed=False):
+def get_data_loaders(dataset, transform, batch_size=64, root=os.path.join(EXPERIMENT_ROOT, 'data'), num_workers=0, is_distributed=False):
 
   train_set = dataset(root=root, train=True, download=False, transform=transform)
   test_set = dataset(root=root, train=False, download=False, transform=transform)
 
   train_sampler = None
-  num_workers = 0
   if is_distributed:
     train_sampler = torch.utils.data.distributed.DistributedSampler(dataset=train_set)
-    num_workers = 2
 
   train_loader = torch.utils.data.DataLoader(dataset=train_set, batch_size=batch_size, sampler=train_sampler, num_workers=num_workers)
   test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=num_workers)
@@ -107,6 +106,89 @@ def train(model, loss_fn, optimizer, device, train_loader, epoch=1, report_every
       running_loss = 0.0
 
   return final_loss
+
+def default_model_initializer(model_class, model_params):
+  model = model_class(*model_params['pos_params'], **model_params['key_params'])
+  return model
+
+def builtin_model_initializer(model_class, model_params):
+  model_params['key_params']['weights'] = model_params['key_params']['weights'].DEFAULT
+  model = default_model_initializer(model_class, model_params)
+  #model = define_finetune_model(model, 10, 'fc')
+  return model
+
+# training_args:
+#   dataset: e.g. torchvision.datasets.CIFAR10
+#   transforms_class: e.g. torchvision.models.ResNet18_Weights.DEFAULT.transforms
+#   num_epochs: e.g. 1
+#   model_class: e.g. torchvision.models.resnet18
+#   model_params:
+#     pos_params: list or tuple positional arguments for model initialization
+#     key_params: dictionary keyword arguments for model initialization
+#   model_initializer: function that takes in model_class, model_params and returns model instance
+#   loss_fn_class:  e.g. torch.nn.CrossEntropyLoss
+#   optimizer_class: e.g. torch.optim.Adam
+#   optimizer_params: dictionary keyword arguments for optimizer initialization
+# NOTE: Do not manually run this with num_dist_proc > 1
+def train_process(rank, training_args, num_dist_proc=0):
+  print(f"Train process rank {rank}", flush=True)
+  set_random_seeds()
+
+  is_distributed = num_dist_proc > 0
+
+  if is_distributed:
+    print(f"Running DDP on rank {rank}", flush=True)
+    proc_setup(rank, num_dist_proc)
+  device = torch.device(f"cuda:{rank}")
+
+  dataset = training_args['dataset']
+  transforms = training_args['transforms']
+  batch_size = training_args['batch_size']
+  train_loader, test_loader = get_data_loaders(dataset, transforms, batch_size=batch_size, is_distributed=is_distributed)
+
+  model_params = training_args['model_params']
+  #model_params['train_loader'] = train_loader
+  model_pos_params = model_params['pos_params']
+  model_key_params = model_params['key_params']
+  model_class = training_args['model_class']
+  model_init_fn = default_model_initializer
+  if 'model_initializer' in training_args:
+    model_init_fn = training_args['model_initializer']
+  model = model_init_fn(model_class, model_params)
+
+  model.to(device)
+  if is_distributed:
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank])
+
+  loss_fn = training_args['loss_fn_class']()
+  optimizer_key_params = training_args['optimizer_params']
+  optimizer_class = training_args['optimizer_class']
+  optimizer = optimizer_class(model.parameters(), **optimizer_key_params)
+
+  num_epochs = training_args['num_epochs']
+
+  losses = []
+  accuracies = []
+  for epoch in range(1, num_epochs+1):
+    loss = train(model, loss_fn, optimizer, device, train_loader, epoch=epoch)
+    losses.append(loss)
+
+    if rank == 0:
+      acc = test(model, device, test_loader)
+      accuracies.append(acc)
+      print(f'Accuracy after epoch {epoch}: {100 * acc} %', flush=True)
+
+  if is_distributed:
+    cleanup()
+
+def launch(training_args, num_proc=2, ckpt_dir="model_ckpts"):
+  '''
+  if not os.path.exists(ckpt_dir):
+    os.makedirs(ckpt_dir)
+  '''
+  train_process_args = (training_args, num_proc,)
+  mp.spawn(train_process, args=train_process_args, nprocs=num_proc, join=True)
+  #mp.spawn(train_process, args=(num_epochs, num_proc, ckpt_dir,), nprocs=num_proc, join=True)
 
 '''
 def train(rank, num_epochs, num_proc, ckpt_dir):
@@ -183,8 +265,3 @@ def train(rank, num_epochs, num_proc, ckpt_dir):
 
     cleanup()
 '''
-
-def launch(num_epochs=2, num_proc=2, ckpt_dir="model_ckpts"):
-  if not os.path.exists(ckpt_dir):
-    os.makedirs(ckpt_dir)
-  mp.spawn(train, args=(num_epochs, num_proc, ckpt_dir,), nprocs=num_proc, join=True)
