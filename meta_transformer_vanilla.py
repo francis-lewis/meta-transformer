@@ -30,8 +30,6 @@ class MetaTransformer(torch.nn.Module):
     self.num_classes = dict(self._base_model.named_modules())[layer_names[-1]].out_features
     self.fc = torch.nn.Linear(self._projection_dim, self.num_classes)
 
-    #self.templates = torch.zeros((self.num_classes, self.num_classes), requires_grad=False, device=input_batch.device)
-
   def _activations_hook(self, name):
 
     def hook(model, input, output):
@@ -62,39 +60,6 @@ class MetaTransformer(torch.nn.Module):
     activations = self._get_batch_activations(inputs)
     fc_name = self._layer_names[-1]
     output = torch.zeros_like(activations[fc_name])
-    if self.training:
-      output = self._forward(activations)
-
-      """
-      inds = torch.max(output, 1).indices.unsqueeze(1).repeat((1, self.num_classes))
-      for class_idx in range(self.num_classes):
-        batch_templates = torch.reshape(activations[fc_name][inds == class_idx], (-1, self.num_classes))
-        if batch_templates.shape[0] > 0:
-          avg_template = torch.mean(batch_templates, 0, keepdim=True)
-          self.templates[class_idx, :] = 0.9 * self.templates[class_idx, :] + 0.1 * avg_template
-      #print(self.templates, flush=True)
-      """
-
-    else:
-      output = self._forward(activations)
-      """
-      fc_activations = activations[fc_name]
-      max_vals, max_inds = torch.max(fc_activations, 1)
-      max_inds = torch.unsqueeze(max_inds, 1).repeat((1, self.num_classes))
-      max_vals = torch.unsqueeze(max_vals, 1)
-      for class_idx in range(self.num_classes):
-        template = self.templates[class_idx, :].squeeze()
-        fc_activations[max_inds == class_idx] = template.repeat((fc_activations[max_inds == class_idx].shape[0] // template.shape[0]))
-      activations[fc_name] = fc_activations
-      output = self._forward(activations)
-      """
-      """
-      batch_size = activations[fc_name].shape[0]
-      for class_idx in range(self.num_classes):
-        activations[fc_name] = self.templates[class_idx, :].repeat((batch_size, 1))
-        primed_output = self._forward(activations)
-        #output[:, i] = torch.max(primed_output, 1).values
-        output[:, class_idx] = primed_output[:, class_idx]
-      """
+    output = self._forward(activations)
 
     return output
