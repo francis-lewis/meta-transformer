@@ -1,3 +1,4 @@
+import copy
 import os
 import random
 import sys
@@ -107,11 +108,12 @@ def default_model_initializer(model_class, model_params):
   return model
 
 def builtin_model_initializer(model_class, model_params):
-  model_params['key_params']['weights'] = model_params['key_params']['weights'].DEFAULT
-  model = default_model_initializer(model_class, model_params)
+  local_model_params = copy.deepcopy(model_params)
+  local_model_params['key_params']['weights'] = local_model_params['key_params']['weights'].DEFAULT
+  model = default_model_initializer(model_class, local_model_params)
 
   if 'finetune_params' in model_params:
-    model = define_finetune_model(model, **model_params['finetune_params'])
+    model = define_finetune_model(model, **local_model_params['finetune_params'])
 
   return model
 
@@ -140,20 +142,7 @@ def train_process(rank, training_args, num_dist_proc=0):
     proc_setup(rank, num_dist_proc)
   device = torch.device(f"cuda:{rank}")
 
-  dataset = training_args['dataset']
-  transforms = training_args['transforms']
-  batch_size = training_args['batch_size']
-  train_loader, test_loader = get_data_loaders(dataset, transforms, batch_size=batch_size, is_distributed=is_distributed)
-
-  model_params = training_args['model_params']
-  #model_params['train_loader'] = train_loader
-  model_pos_params = model_params['pos_params']
-  model_key_params = model_params['key_params']
-  model_class = training_args['model_class']
-  model_init_fn = default_model_initializer
-  if 'model_initializer' in training_args:
-    model_init_fn = training_args['model_initializer']
-  model = model_init_fn(model_class, model_params)
+  model, train_loader, test_loader = get_model_definition(training_args, is_distributed=is_distributed)
 
   model.to(device)
   if is_distributed:
@@ -180,13 +169,36 @@ def train_process(rank, training_args, num_dist_proc=0):
   if is_distributed:
     cleanup()
 
-def launch(training_args, num_proc=2, ckpt_dir="model_ckpts"):
+def launch(training_args, num_proc=2):
   '''
   if not os.path.exists(ckpt_dir):
     os.makedirs(ckpt_dir)
   '''
-  train_process_args = (training_args, num_proc,)
+  train_process_args = (copy.deepcopy(training_args), num_proc,)
   mp.spawn(train_process, args=train_process_args, nprocs=num_proc, join=True)
+
+def get_model_definition(training_args, is_distributed=False):
+  dataset = training_args['dataset']
+  transforms = training_args['transforms']
+  batch_size = training_args['batch_size']
+  train_loader, test_loader = get_data_loaders(dataset, transforms, batch_size=batch_size, is_distributed=is_distributed)
+
+  model_params = training_args['model_params']
+  #model_params['train_loader'] = train_loader
+  model_pos_params = model_params['pos_params']
+  model_key_params = model_params['key_params']
+  model_class = training_args['model_class']
+  model_init_fn = default_model_initializer
+  if 'model_initializer' in training_args:
+    model_init_fn = training_args['model_initializer']
+  model = model_init_fn(model_class, model_params)
+
+  return model, train_loader, test_loader
+
+def get_model(training_args):
+  local_training_args = copy.deepcopy(training_args)
+  model, _, _ = get_model_definition(local_training_args)
+  return model
 
 '''
 def train(rank, num_epochs, num_proc, ckpt_dir):
