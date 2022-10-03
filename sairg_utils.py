@@ -10,11 +10,6 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 
-#from torch.nn.parallel import DistributedDataParallel as DDP
-from vit_pytorch import SimpleViT
-
-from conv_net import ConvNet
-
 EXPERIMENT_ROOT = os.path.expanduser("~/Developer/experiments")
 
 def proc_setup(rank, num_proc):
@@ -34,7 +29,7 @@ def set_random_seeds(random_seed=0):
   np.random.seed(random_seed)
   random.seed(random_seed)
 
-def define_finetune_model(base_model, num_classes, head_layer_name, finetune_base=False):
+def define_finetune_model(base_model, num_classes=10, head_layer_name='fc', finetune_base=False):
   if not finetune_base:
     for param in base_model.parameters():
       param.requires_grad = False
@@ -114,13 +109,17 @@ def default_model_initializer(model_class, model_params):
 def builtin_model_initializer(model_class, model_params):
   model_params['key_params']['weights'] = model_params['key_params']['weights'].DEFAULT
   model = default_model_initializer(model_class, model_params)
-  #model = define_finetune_model(model, 10, 'fc')
+
+  if 'finetune_params' in model_params:
+    model = define_finetune_model(model, **model_params['finetune_params'])
+
   return model
 
 # training_args:
 #   dataset: e.g. torchvision.datasets.CIFAR10
 #   transforms_class: e.g. torchvision.models.ResNet18_Weights.DEFAULT.transforms
 #   num_epochs: e.g. 1
+#   batch_size: e.g. 64
 #   model_class: e.g. torchvision.models.resnet18
 #   model_params:
 #     pos_params: list or tuple positional arguments for model initialization
@@ -188,7 +187,6 @@ def launch(training_args, num_proc=2, ckpt_dir="model_ckpts"):
   '''
   train_process_args = (training_args, num_proc,)
   mp.spawn(train_process, args=train_process_args, nprocs=num_proc, join=True)
-  #mp.spawn(train_process, args=(num_epochs, num_proc, ckpt_dir,), nprocs=num_proc, join=True)
 
 '''
 def train(rank, num_epochs, num_proc, ckpt_dir):
