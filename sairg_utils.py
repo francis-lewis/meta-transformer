@@ -131,7 +131,7 @@ def builtin_model_initializer(model_class, model_params):
 #   optimizer_class: e.g. torch.optim.Adam
 #   optimizer_params: dictionary keyword arguments for optimizer initialization
 # NOTE: Do not manually run this with num_dist_proc > 1
-def train_process(rank, training_args, num_dist_proc=0):
+def train_process(rank, input_training_args, num_dist_proc=0):
   print(f"Train process rank {rank}", flush=True)
   set_random_seeds()
 
@@ -141,6 +141,8 @@ def train_process(rank, training_args, num_dist_proc=0):
     print(f"Running DDP on rank {rank}", flush=True)
     proc_setup(rank, num_dist_proc)
   device = torch.device(f"cuda:{rank}")
+
+  training_args = copy.deepcopy(input_training_args)
 
   model, train_loader, test_loader = get_model_definition(training_args, is_distributed=is_distributed)
 
@@ -153,6 +155,11 @@ def train_process(rank, training_args, num_dist_proc=0):
   optimizer_class = training_args['optimizer_class']
   optimizer = optimizer_class(model.parameters(), **optimizer_key_params)
 
+  checkpoint_dir = training_args['checkpoint_dir']
+  checkpoint_prefix = training_args['checkpoint_prefix']
+  checkpoint_filename = checkpoint_prefix + ".pth"
+  checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
+
   num_epochs = training_args['num_epochs']
 
   losses = []
@@ -162,19 +169,26 @@ def train_process(rank, training_args, num_dist_proc=0):
     losses.append(loss)
 
     if rank == 0:
-      acc = test(model, device, test_loader)
-      accuracies.append(acc)
-      print(f'Accuracy after epoch {epoch}: {100 * acc} %', flush=True)
+      accuracy = test(model, device, test_loader)
+      if len(accuracies) == 0 or accuracy > max(accuracies):
+        print(f'Saving {checkpoint_filename} at epoch {epoch}')
+        state_dict = copy.deepcopy(model.state_dict())
+        if is_distributed:
+          state_dict = copy.deepcopy(model.module.state_dict())
+        torch.save(state_dict, checkpoint_path)
+      print(f'Accuracy after epoch {epoch}: {100 * accuracy} %', flush=True)
+      accuracies.append(accuracy)
 
   if is_distributed:
     cleanup()
 
 def launch(training_args, num_proc=2):
-  '''
-  if not os.path.exists(ckpt_dir):
-    os.makedirs(ckpt_dir)
-  '''
-  train_process_args = (copy.deepcopy(training_args), num_proc,)
+
+  checkpoint_dir = training_args['checkpoint_dir']
+  if not os.path.exists(checkpoint_dir):
+    os.makedirs(checkpoint_dir)
+
+  train_process_args = (training_args, num_proc,)
   mp.spawn(train_process, args=train_process_args, nprocs=num_proc, join=True)
 
 def get_model_definition(training_args, is_distributed=False):
@@ -195,83 +209,19 @@ def get_model_definition(training_args, is_distributed=False):
 
   return model, train_loader, test_loader
 
-def get_model(training_args):
+def get_model(training_args, train=False):
   local_training_args = copy.deepcopy(training_args)
   model, _, _ = get_model_definition(local_training_args)
+
+  checkpoint_dir = local_training_args['checkpoint_dir']
+  checkpoint_prefix = local_training_args['checkpoint_prefix']
+  checkpoint_filename = checkpoint_prefix + ".pth"
+  checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
+
+  if not os.path.exists(checkpoint_path) and train:
+    launch(training_args)
+  # checkpoint_path should exist after training
+  if os.path.exists(checkpoint_path):
+    model.load_state_dict(torch.load(checkpoint_path))
+
   return model
-
-'''
-def train(rank, num_epochs, num_proc, ckpt_dir):
-    set_random_seeds()
-    proc_setup(rank, num_proc)
-
-    print(f"Running DDP on rank {rank}", flush=True)
-    device = torch.device(f"cuda:{rank}")
-
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-
-    batch_size = 128
-
-    train_set = torchvision.datasets.CIFAR10(root='../data', train=True, download=False, transform=transform)
-    test_set = torchvision.datasets.CIFAR10(root='../data', train=False, download=False, transform=transform)
-
-    train_sampler = torch.utils.data.distributed.DistributedSampler(dataset=train_set)
-    train_loader = torch.utils.data.DataLoader(dataset=train_set, batch_size=batch_size, sampler=train_sampler, num_workers=2)
-    test_loader = torch.utils.data.DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=2)
-
-    classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
-
-    conv_net = ConvNet().to(device)
-
-#     base_net = conv_net
-
-#     # Register hook to get activations for each layer of convnet
-#     activations = {}
-#     def get_activations(name):
-#         def hook(model, input, output):
-#             activations[name] = torch.flatten(output.detach(), start_dim=1)
-#         return hook
-
-#     for name, module in base_net.named_modules():
-#         module.register_forward_hook(get_activations(name))
-
-    # Train base network
-    base_net = DDP(conv_net, device_ids=[rank])
-
-    loss_fn = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(base_net.parameters(), lr=1e-3)
-
-    best_accuracy = -float('inf')
-    for epoch in range(num_epochs):
-
-        base_net.train()
-        running_loss = 0.0
-        for i, data in enumerate(train_loader, 0):
-            inputs, labels = data[0].to(device), data[1].to(device)
-
-            optimizer.zero_grad()
-
-            outputs = base_net(inputs)
-            loss = loss_fn(outputs, labels)
-            loss.backward()
-            optimizer.step()
-
-            running_loss += loss.item()
-
-            samples = 2000
-            if i % samples == samples-1:
-                print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / samples:.3f}', flush=True)
-                running_loss = 0.0
-
-        if rank == 0:
-          accuracy = test(model=base_net, device=device, test_loader=test_loader)
-          if accuracy > best_accuracy:
-            torch.save(base_net.state_dict(), f"{ckpt_dir}/conv_net_{epoch}.pth")
-            best_accuracy = accuracy
-          print(f'Accuracy of the network on the 10000 test images: {100 * accuracy} %', flush=True)
-
-    cleanup()
-'''
