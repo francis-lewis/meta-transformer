@@ -1,10 +1,27 @@
+import copy
+
 import torch
+
+import sairg_utils
+
+def metatransformer_model_initializer(model_class, input_model_params):
+  model_params = copy.deepcopy(input_model_params)
+  base_model_class = model_params['base_model_class']
+  base_model_params = model_params['base_model_params']
+  #TODO: Make this load the pretrained model
+  base_model = sairg_utils.builtin_model_initializer(base_model_class, base_model_params)
+
+  pos_args = [base_model, model_params['layer_names'], model_params['input_batch']]
+  model = model_class(*pos_args, **model_params['kwargs'])
+
+  return model
 
 class MetaTransformer(torch.nn.Module):
 
-  def __init__(self, base_model, layer_names, input_batch, num_transformer_layers=6, num_heads=8, projection_dim=1000):
+  def __init__(self, base_model, layer_names, input_batch_shape, num_transformer_layers=6, num_heads=8, projection_dim=1000):
     super().__init__()
 
+    input_batch = torch.zeros(input_batch_shape)
     self._base_model = base_model
     for param in self._base_model.parameters():
       param.requires_grad = False

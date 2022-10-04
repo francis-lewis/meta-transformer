@@ -2,6 +2,7 @@ import copy
 import os
 import random
 import sys
+import time
 import numpy as np
 
 import torch
@@ -74,7 +75,6 @@ def test(model, device, test_loader):
   return accuracy
 
 def train(model, loss_fn, optimizer, device, train_loader, epoch=1, report_every_n=2000, min_num_reports=5):
-
   model.to(device)
   model.train()
 
@@ -148,7 +148,7 @@ def train_process(rank, input_training_args, num_dist_proc=0):
 
   model.to(device)
   if is_distributed:
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank])
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank], gradient_as_bucket_view=True)
 
   loss_fn = training_args['loss_fn_class']()
   optimizer_key_params = training_args['optimizer_params']
@@ -164,20 +164,26 @@ def train_process(rank, input_training_args, num_dist_proc=0):
 
   losses = []
   accuracies = []
+  start = time.time()
   for epoch in range(1, num_epochs+1):
+    tok = time.time()
     loss = train(model, loss_fn, optimizer, device, train_loader, epoch=epoch)
+    tik = time.time()
+    print(f'Training epoch {epoch} took {tik - tok}s', flush=True)
     losses.append(loss)
 
     if rank == 0:
       accuracy = test(model, device, test_loader)
       if len(accuracies) == 0 or accuracy > max(accuracies):
-        print(f'Saving {checkpoint_filename} at epoch {epoch}')
+        print(f'Saving {checkpoint_filename} at epoch {epoch}', flush=True)
         state_dict = copy.deepcopy(model.state_dict())
         if is_distributed:
           state_dict = copy.deepcopy(model.module.state_dict())
         torch.save(state_dict, checkpoint_path)
       print(f'Accuracy after epoch {epoch}: {100 * accuracy} %', flush=True)
       accuracies.append(accuracy)
+  end = time.time()
+  print(f'Time to train all epochs was {end - start}s', flush=True)
 
   if is_distributed:
     cleanup()
@@ -198,9 +204,6 @@ def get_model_definition(training_args, is_distributed=False):
   train_loader, test_loader = get_data_loaders(dataset, transforms, batch_size=batch_size, is_distributed=is_distributed)
 
   model_params = training_args['model_params']
-  #model_params['train_loader'] = train_loader
-  model_pos_params = model_params['pos_params']
-  model_key_params = model_params['key_params']
   model_class = training_args['model_class']
   model_init_fn = default_model_initializer
   if 'model_initializer' in training_args:
@@ -219,7 +222,7 @@ def get_model(training_args, train=False):
   checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
 
   if not os.path.exists(checkpoint_path) and train:
-    launch(training_args)
+    train_process(0, training_args)
   # checkpoint_path should exist after training
   if os.path.exists(checkpoint_path):
     model.load_state_dict(torch.load(checkpoint_path))
