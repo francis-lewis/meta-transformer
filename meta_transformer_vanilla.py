@@ -6,10 +6,8 @@ import sairg_utils
 
 def metatransformer_model_initializer(model_class, input_model_params):
   model_params = copy.deepcopy(input_model_params)
-  base_model_class = model_params['base_model_class']
-  base_model_params = model_params['base_model_params']
-  #TODO: Make this load the pretrained model
-  base_model = sairg_utils.builtin_model_initializer(base_model_class, base_model_params)
+  base_training_args = model_params['base_training_args']
+  base_model = sairg_utils.get_model(base_training_args)
 
   pos_args = [base_model, model_params['layer_names'], model_params['input_batch']]
   model = model_class(*pos_args, **model_params['kwargs'])
