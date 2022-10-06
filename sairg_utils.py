@@ -1,5 +1,6 @@
 import copy
 import os
+import importlib
 import random
 import sys
 import time
@@ -13,6 +14,29 @@ import torch.optim as optim
 import torchvision
 
 EXPERIMENT_ROOT = os.path.expanduser("~/Developer/experiments")
+
+def get_class_by_path(class_path):
+  path = class_path.split('.')
+  module_name = ''
+  class_pos = 0
+  module = None
+  try:
+    for i in range(1, len(path)+1):
+      try:
+        module_name = '.'.join(path[:i])
+        module = importlib.import_module(module_name)
+      except ModuleNotFoundError:
+        class_pos = i-1
+        module_name = '.'.join(path[:class_pos])
+        module = importlib.import_module(module_name)
+        break
+    class_def = module
+    for class_name in path[class_pos:]:
+      class_def = getattr(class_def, class_name)
+  except:
+    class_def = None
+
+  return class_def
 
 def proc_setup(rank, num_proc):
   os.environ['MASTER_ADDR'] = 'localhost'
@@ -117,6 +141,33 @@ def builtin_model_initializer(model_class, model_params):
 
   return model
 
+def import_arg_classes(training_args):
+
+  collections = [training_args]
+  for collection in collections:
+
+    generator = None
+    if type(collection) == dict:
+      generator = collection.items()
+    elif type(collection) == list:
+      generator = enumerate(collection)
+
+    for k, v in generator:
+      if type(v) == str:
+        v_class = get_class_by_path(v)
+        if v_class is not None:
+
+          # Execute v_class if it's an executable partial functor
+          if type(v_class) == get_class_by_path('functools.partial') and \
+             len(v_class.args) == 0:
+             v_class = v_class()
+
+          collection[k] = v_class
+      elif type(v) in [list, dict]:
+        collections.append(v)
+
+  return training_args
+
 # training_args:
 #   dataset: e.g. torchvision.datasets.CIFAR10
 #   transforms_class: e.g. torchvision.models.ResNet18_Weights.DEFAULT.transforms
@@ -143,6 +194,7 @@ def train_process(rank, input_training_args, num_dist_proc=0):
   device = torch.device(f"cuda:{rank}")
 
   training_args = copy.deepcopy(input_training_args)
+  training_args = import_arg_classes(training_args)
 
   model, train_loader, test_loader = get_model_definition(training_args, is_distributed=is_distributed)
 
@@ -212,19 +264,23 @@ def get_model_definition(training_args, is_distributed=False):
 
   return model, train_loader, test_loader
 
-def get_model(training_args, train=False):
+def get_model(training_args, train=False, force=False):
   local_training_args = copy.deepcopy(training_args)
-  model, _, _ = get_model_definition(local_training_args)
+  local_training_args = import_arg_classes(local_training_args)
 
   checkpoint_dir = local_training_args['checkpoint_dir']
   checkpoint_prefix = local_training_args['checkpoint_prefix']
   checkpoint_filename = checkpoint_prefix + ".pth"
   checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
 
-  if not os.path.exists(checkpoint_path) and train:
-    train_process(0, training_args)
+  if train and (not os.path.exists(checkpoint_path) or force):
+    train_process(0, local_training_args)
   # checkpoint_path should exist after training
+
+  model, _, _ = get_model_definition(local_training_args)
   if os.path.exists(checkpoint_path):
     model.load_state_dict(torch.load(checkpoint_path))
+  elif force:
+    raise Exception(f"get_model: Failed to load model at {checkpoint_path}.")
 
   return model
