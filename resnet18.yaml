@@ -1,0 +1,27 @@
+name: gene_test_resnet18
+hyperparameters:
+  global_batch_size: 64
+  dataset: 'torchvision.datasets.CIFAR10'
+  transforms: 'torchvision.models.ResNet18_Weights.DEFAULT.transforms'
+  model_class: 'torchvision.models.resnet18'
+  model_params:
+    pos_params: []
+    key_params:
+      weights: 'torchvision.models.ResNet18_Weights'
+    finetune_params:
+      num_classes: 10
+      head_layer_name: 'fc'
+  model_initializer: 'sairg_utils.builtin_model_initializer'
+  loss_fn_class: 'torch.nn.CrossEntropyLoss'
+  optimizer_class: 'torch.optim.Adam'
+  optimizer_params:
+    lr: 1e-3
+  checkpoint_dir: '/home/francis/Developer/experiments/meta-transformer/model_ckpts'
+  checkpoint_prefix: 'resnet18_cifar10'
+searcher:
+  name: single
+  metric: validation_loss
+  max_length:
+    batches: 937
+  smaller_is_better: true
+entrypoint: determined_utils:ModelTrial
