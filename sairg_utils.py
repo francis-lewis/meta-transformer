@@ -196,7 +196,11 @@ def train_process(rank, input_training_args, num_dist_proc=0):
   training_args = copy.deepcopy(input_training_args)
   training_args = import_arg_classes(training_args)
 
-  model, train_loader, test_loader = get_model_definition(training_args, is_distributed=is_distributed)
+  dataset = training_args['dataset']
+  transforms = training_args['transforms']
+  batch_size = training_args['batch_size']
+  train_loader, test_loader = get_data_loaders(dataset, transforms, batch_size=batch_size, is_distributed=is_distributed)
+  model = get_model_definition(training_args)
 
   model.to(device)
   if is_distributed:
@@ -249,11 +253,7 @@ def launch(training_args, num_proc=2):
   train_process_args = (training_args, num_proc,)
   mp.spawn(train_process, args=train_process_args, nprocs=num_proc, join=True)
 
-def get_model_definition(training_args, is_distributed=False):
-  dataset = training_args['dataset']
-  transforms = training_args['transforms']
-  batch_size = training_args['batch_size']
-  train_loader, test_loader = get_data_loaders(dataset, transforms, batch_size=batch_size, is_distributed=is_distributed)
+def get_model_definition(training_args):
 
   model_params = training_args['model_params']
   model_class = training_args['model_class']
@@ -262,7 +262,7 @@ def get_model_definition(training_args, is_distributed=False):
     model_init_fn = training_args['model_initializer']
   model = model_init_fn(model_class, model_params)
 
-  return model, train_loader, test_loader
+  return model
 
 def get_model(training_args, train=False, force=False):
   local_training_args = copy.deepcopy(training_args)
@@ -277,7 +277,7 @@ def get_model(training_args, train=False, force=False):
     train_process(0, local_training_args)
   # checkpoint_path should exist after training
 
-  model, _, _ = get_model_definition(local_training_args)
+  model = get_model_definition(local_training_args)
   if os.path.exists(checkpoint_path):
     model.load_state_dict(torch.load(checkpoint_path))
   elif force:
