@@ -22,13 +22,23 @@ hyperparameters:
   loss_fn_class: 'torch.nn.CrossEntropyLoss'
   optimizer_class: 'torch.optim.Adam'
   optimizer_params:
-    lr: 1e-3
+    lr:
+      type: log
+      minval: -5.0
+      maxval: 0.0
+      base: 10.0
   checkpoint_dir: '/home/francis/Developer/experiments/meta-transformer/model_ckpts'
   checkpoint_prefix: 'resnet18_cifar10'
+records_per_epoch: 50000
 searcher:
-  name: single
+  name: adaptive_asha
   metric: validation_loss
   max_length:
-    batches: 937
+    epochs: 10
   smaller_is_better: true
+  max_trials: 16
+min_validation_period:
+  epochs: 1
+min_checkpoint_period:
+  epochs: 1
 entrypoint: determined_utils:ModelTrial
