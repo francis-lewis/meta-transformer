@@ -141,7 +141,8 @@ def builtin_model_initializer(model_class, model_params):
 
   return model
 
-def import_arg_classes(training_args):
+def import_arg_classes(input_training_args):
+  training_args = copy.deepcopy(input_training_args)
 
   collections = [training_args]
   for collection in collections:

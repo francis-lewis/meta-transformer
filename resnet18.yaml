@@ -1,0 +1,44 @@
+name: gene_test_resnet18
+environment:
+  image: 'determined-env:latest'
+bind_mounts:
+- host_path: '/home/francis/Developer/experiments/data'
+  container_path: '/data'
+- host_path: '/home/francis/Developer/experiments/torch_home'
+  container_path: '/torch_home'
+hyperparameters:
+  global_batch_size: 64
+  dataset: 'torchvision.datasets.CIFAR10'
+  transforms: 'torchvision.models.ResNet18_Weights.DEFAULT.transforms'
+  model_class: 'torchvision.models.resnet18'
+  model_params:
+    pos_params: []
+    key_params:
+      weights: 'torchvision.models.ResNet18_Weights'
+    finetune_params:
+      num_classes: 10
+      head_layer_name: 'fc'
+  model_initializer: 'sairg_utils.builtin_model_initializer'
+  loss_fn_class: 'torch.nn.CrossEntropyLoss'
+  optimizer_class: 'torch.optim.Adam'
+  optimizer_params:
+    lr:
+      type: log
+      minval: -5.0
+      maxval: 0.0
+      base: 10.0
+  checkpoint_dir: '/home/francis/Developer/experiments/meta-transformer/model_ckpts'
+  checkpoint_prefix: 'resnet18_cifar10'
+records_per_epoch: 50000
+searcher:
+  name: adaptive_asha
+  metric: validation_loss
+  max_length:
+    epochs: 10
+  smaller_is_better: true
+  max_trials: 16
+min_validation_period:
+  epochs: 1
+min_checkpoint_period:
+  epochs: 1
+entrypoint: determined_utils:ModelTrial
