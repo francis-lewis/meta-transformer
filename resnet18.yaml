@@ -1,4 +1,9 @@
 name: gene_test_resnet18
+environment:
+  image: 'determined-env:latest'
+bind_mounts:
+- host_path: '/home/francis/Developer/experiments/data'
+  container_path: '/data'
 hyperparameters:
   global_batch_size: 64
   dataset: 'torchvision.datasets.CIFAR10'
