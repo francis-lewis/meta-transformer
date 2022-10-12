@@ -38,7 +38,7 @@ class ModelTrial(PyTorchTrial):
 
   def build_training_data_loader(self):
     train_set = self.dataset(root='/data', train=True, download=False, transform=self.transforms)
-    return DataLoader(train_set, batch_size=self.context.get_per_slot_batch_size())
+    return DataLoader(train_set, batch_size=self.context.get_per_slot_batch_size(), shuffle=True)
 
   def build_validation_data_loader(self):
     val_set = self.dataset(root='/data', train=False, download=False, transform=self.transforms)
