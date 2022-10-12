@@ -50,5 +50,7 @@ RUN pip install gym[all,accept-rom-license] \
 # Install determined
 #RUN pip install determined
 
+ENV TORCH_HOME=/torch_home
+
 ENV NVIDIA_VISIBLE_DEVICES all
 ENV NVIDIA_DRIVER_CAPABILITIES compute,utility,graphics

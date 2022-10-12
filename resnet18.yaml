@@ -4,6 +4,8 @@ environment:
 bind_mounts:
 - host_path: '/home/francis/Developer/experiments/data'
   container_path: '/data'
+- host_path: '/home/francis/Developer/experiments/torch_home'
+  container_path: '/torch_home'
 hyperparameters:
   global_batch_size: 64
   dataset: 'torchvision.datasets.CIFAR10'
